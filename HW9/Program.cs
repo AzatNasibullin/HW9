@@ -1,105 +1,113 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Reflection;
+using System.Collections.Generic;
 
-[AttributeUsage(AttributeTargets.Field)]
+[AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
 public class CustomNameAttribute : Attribute
 {
-    public string CustomFieldName { get; set; }
+    public string Name { get; private set; }
 
-    public CustomNameAttribute(string fieldName)
+    public CustomNameAttribute(string name)
     {
-        CustomFieldName = fieldName;
+        Name = name;
     }
 }
 
-public class CustomSerialization
+public static class SerializationHelper
 {
-    public static string ObjectToString<T>(T obj)
+    public static string ObjectToString(object obj)
     {
-        Type type = typeof(T);
-        var fields = type.GetFields();
-
-        List<string> fieldStrings = new List<string>();
+        var fields = obj.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance);
+        var properties = obj.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        var pairs = new List<string>();
 
         foreach (var field in fields)
         {
-            string fieldName = field.Name;
-            var customNameAttribute = (CustomNameAttribute)Attribute.GetCustomAttribute(field, typeof(CustomNameAttribute));
-            if (customNameAttribute != null)
-            {
-                fieldName = customNameAttribute.CustomFieldName;
-            }
-
-            object value = field.GetValue(obj);
-            fieldStrings.Add($"{fieldName}:{value}");
+            var customNameAttr = field.GetCustomAttribute<CustomNameAttribute>();
+            var name = customNameAttr != null ? customNameAttr.Name : field.Name;
+            pairs.Add($"{name}:{field.GetValue(obj)}");
         }
 
-        return string.Join(", ", fieldStrings);
+        foreach (var property in properties)
+        {
+            var customNameAttr = property.GetCustomAttribute<CustomNameAttribute>();
+            var name = customNameAttr != null ? customNameAttr.Name : property.Name;
+            pairs.Add($"{name}:{property.GetValue(obj)}");
+        }
+
+        return string.Join(",", pairs);
     }
 
-    public static void StringToObject<T>(T obj, string serializedData)
+    public static void StringToObject(string str, object obj)
     {
-        Type type = typeof(T);
-        var fields = type.GetFields();
+        var pairs = str.Split(',');
+        var fields = obj.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance);
+        var properties = obj.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
 
-        string[] fieldData = serializedData.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
-
-        foreach (var data in fieldData)
+        foreach (var pair in pairs)
         {
-            string[] parts = data.Split(':');
-            string propertyName = parts[0];
-            string propertyValue = parts[1];
+            var parts = pair.Split(':');
+            if (parts.Length != 2) continue;
 
-            foreach (var field in fields)
+            var name = parts[0];
+            var value = parts[1];
+
+            FieldInfo field = null;
+            PropertyInfo property = null;
+
+            foreach (var f in fields)
             {
-                string fieldName = field.Name;
-                var customNameAttribute = (CustomNameAttribute)Attribute.GetCustomAttribute(field, typeof(CustomNameAttribute));
-                if (customNameAttribute != null && customNameAttribute.CustomFieldName == propertyName)
+                var customNameAttr = f.GetCustomAttribute<CustomNameAttribute>();
+                if ((customNameAttr != null && customNameAttr.Name == name) || f.Name == name)
                 {
-                    Type fieldType = field.FieldType;
-                    object value;
-
-                    if (fieldType == typeof(int))
-                    {
-                        value = int.Parse(propertyValue);
-                    }
-                    else if (fieldType == typeof(string))
-                    {
-                        value = propertyValue;
-                    }
-                    else
-                    {
-                        value = null;
-                    }
-
-                    field.SetValue(obj, value);
+                    field = f;
+                    break;
                 }
+            }
+
+            foreach (var p in properties)
+            {
+                var customNameAttr = p.GetCustomAttribute<CustomNameAttribute>();
+                if ((customNameAttr != null && customNameAttr.Name == name) || p.Name == name)
+                {
+                    property = p;
+                    break;
+                }
+            }
+
+            if (field != null)
+            {
+                field.SetValue(obj, Convert.ChangeType(value, field.FieldType));
+            }
+            else if (property != null)
+            {
+                property.SetValue(obj, Convert.ChangeType(value, property.PropertyType));
             }
         }
     }
 }
+
 
 public class MyClass
 {
     [CustomName("CustomFieldName")]
     public int I = 0;
-    public string Name = "";
+    public string Name = "NoName";
 }
 
 class Program
 {
     static void Main()
     {
-        MyClass myObj = new MyClass();
-        myObj.I = 42;
-        myObj.Name = "John";
+        MyClass myObject = new MyClass ();
+        myObject.I = 42;
+        myObject.Name = "Иван";
 
-        string serializedData = CustomSerialization.ObjectToString(myObj);
-        Console.WriteLine(serializedData);
+        string serialized = SerializationHelper.ObjectToString(myObject);
+        Console.WriteLine(serialized);
 
-        MyClass newObj = new MyClass();
-        CustomSerialization.StringToObject(newObj, serializedData);
-        Console.WriteLine($"New object values: I={newObj.I}, Name={newObj.Name}");
+        MyClass newObject = new MyClass();
+        SerializationHelper.StringToObject("", serialized);
+        Console.WriteLine($"New object values: I={newObject.I}, Name={newObject.Name}");
     }
 }
